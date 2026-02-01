@@ -27,7 +27,7 @@
 
 | Main Menu | AI CV Analysis |
 | :---: | :---: |
-| <img src="/Automation/screenshots/img1.png" width="250"> | <img src="Automation/screenshots/img2.png" width="250"> |
+| <img src="/Automation/screenshots/img1.jpeg" width="250"> | <img src="Automation/screenshots/img2.jpeg" width="250"> |
 
 ## 🚀 Getting Started
 
