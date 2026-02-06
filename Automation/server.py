@@ -18,43 +18,64 @@ app = Flask(__name__)
 VERIFY_TOKEN = "my_secure_token_2026"
 DOWNLOAD_FOLDER = "downloaded_cvs"
 EXCEL_FILE = "Candidate_Database.xlsx"
+CREDENTIALS_FILE = "mycreds.txt"
 
-# Dictionary to track which position a user is applying for
+# Your Specific Recieved_CVs Folder ID
+CV_FOLDER_ID = "1daEjU47W2q68EinutSos2YT-jCByVlsK" 
+
 user_states = {} 
 
 if not os.path.exists(DOWNLOAD_FOLDER):
     os.makedirs(DOWNLOAD_FOLDER)
 
 # --- GOOGLE DRIVE SYNC LOGIC ---
-def sync_to_google_drive():
-    """Uploads or Updates the local Excel file to Izaan's Google Drive"""
+def sync_to_google_drive(local_path, drive_title, folder_id=None):
+    """Handles One-Time Login, Master Excel Updating, and Folder Routing"""
+    print(f"\n☁️ [CLOUD] Syncing: {drive_title}...")
     try:
-        print("☁️ Attempting to sync with Google Drive...")
         gauth = GoogleAuth()
-        # This looks for 'client_secrets.json' in your folder
-        gauth.LocalWebserverAuth() 
+        # FIX: Load saved credentials to avoid repeated logins
+        if os.path.exists(CREDENTIALS_FILE):
+            gauth.LoadCredentialsFile(CREDENTIALS_FILE)
+        
+        if gauth.credentials is None:
+            print("🔑 [CLOUD] First-time setup. Please authenticate via the link in terminal.")
+            gauth.CommandLineAuth()
+        elif gauth.access_token_expired:
+            print("🔄 [CLOUD] Token expired. Refreshing...")
+            gauth.Refresh()
+        else:
+            gauth.Authorize()
+        
+        # Save credentials for future use
+        gauth.SaveCredentialsFile(CREDENTIALS_FILE)
         drive = GoogleDrive(gauth)
 
-        # Check if file already exists on Drive to update it
-        query = f"title='{EXCEL_FILE}' and trashed=false"
-        file_list = drive.ListFile({'q': query}).GetList()
-        
-        if file_list:
-            file_drive = file_list[0] # Update existing
+        # File Metadata
+        file_metadata = {'title': drive_title}
+        if folder_id:
+            file_metadata['parents'] = [{'id': folder_id}]
+
+        # FIX: Update Master Excel instead of creating duplicates
+        if drive_title == EXCEL_FILE:
+            query = f"title='{EXCEL_FILE}' and trashed=false"
+            file_list = drive.ListFile({'q': query}).GetList()
+            file_drive = file_list[0] if file_list else drive.CreateFile(file_metadata)
+            print(f"🔄 [CLOUD] Syncing Master Database...")
         else:
-            file_drive = drive.CreateFile({'title': EXCEL_FILE}) # Create new
+            # Always create a new entry for individual CVs
+            file_drive = drive.CreateFile(file_metadata)
 
-        file_drive.SetContentFile(EXCEL_FILE)
+        file_drive.SetContentFile(local_path)
         file_drive.Upload()
-        print(f"✅ Cloud Sync Success: {EXCEL_FILE} is now updated on Drive!")
-    except Exception as e:
-        print(f"❌ Drive Sync Error: {e}")
+        print(f"✅ [CLOUD] SUCCESS: {drive_title} is updated on Drive!\n")
 
-# --- HR CATEGORIZATION LOGIC ---
+    except Exception as e:
+        print(f"❌ [CLOUD] Drive Sync Error: {e}\n")
+
+# --- HR CATEGORIZATION ---
 def get_rank_label(score_str):
-    """Maps numerical AI score to your specific HR categories"""
     try:
-        # Extract only digits (e.g., "85/100" -> 85)
         score = int(''.join(filter(str.isdigit, score_str)))
         if 80 <= score <= 100: return "Best candidate for the job role"
         if 60 <= score <= 79: return "Average for the job"
@@ -65,9 +86,7 @@ def get_rank_label(score_str):
 
 # --- EXCEL LOGGING ---
 def log_to_excel(phone, position, score, analysis):
-    """Saves candidate data locally and then triggers cloud sync"""
     rank_label = get_rank_label(score)
-    
     new_entry = {
         "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M")],
         "Phone Number": [phone],
@@ -76,89 +95,75 @@ def log_to_excel(phone, position, score, analysis):
         "Category": [rank_label],
         "AI Analysis": [analysis]
     }
-    
     df = pd.DataFrame(new_entry)
     
-    if not os.path.exists(EXCEL_FILE):
-        df.to_excel(EXCEL_FILE, index=False)
-    else:
-        with pd.ExcelWriter(EXCEL_FILE, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
-            try:
+    try:
+        if not os.path.exists(EXCEL_FILE):
+            df.to_excel(EXCEL_FILE, index=False)
+        else:
+            with pd.ExcelWriter(EXCEL_FILE, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
                 existing_df = pd.read_excel(EXCEL_FILE)
                 df.to_excel(writer, index=False, header=False, startrow=len(existing_df) + 1)
-            except:
-                df.to_excel(writer, index=False)
-    
-    print(f"📊 Local Excel Updated for {phone}.")
-    # Now push the updated file to Google Drive
-    sync_to_google_drive()
+        
+        print(f"📊 [LOCAL] Excel Updated.")
+        # Database stays in main Drive root
+        sync_to_google_drive(EXCEL_FILE, EXCEL_FILE)
 
-# --- HELPER: SEND MESSAGE ---
+    except PermissionError:
+        print(f"❌ [LOCAL] ERROR: Permission Denied. Close '{EXCEL_FILE}'!")
+
+# --- WHATSAPP HELPERS ---
 def send_reply(to_number, text_body):
     url = f"https://graph.facebook.com/{VERSION}/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to_number,
-        "type": "text",
-        "text": {"body": text_body}
-    }
+    payload = {"messaging_product": "whatsapp", "to": to_number, "type": "text", "text": {"body": text_body}}
     try:
-        return requests.post(url, headers=headers, json=payload)
-    except Exception as e:
-        print(f"❌ Send Error: {e}")
+        return requests.post(url, headers=headers, json=payload, timeout=10)
+    except:
         return None
 
-# --- HELPER: DOWNLOAD CV ---
 def download_media(media_id):
     try:
         url_info = f"https://graph.facebook.com/{VERSION}/{media_id}"
         headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-        info_res = requests.get(url_info, headers=headers)
-        if info_res.status_code == 200:
-            media_url = info_res.json().get("url")
-            file_res = requests.get(media_url, headers=headers)
+        res = requests.get(url_info, headers=headers, timeout=10)
+        if res.status_code == 200:
+            media_url = res.json().get("url")
+            file_res = requests.get(media_url, headers=headers, timeout=20)
             if file_res.status_code == 200:
-                filename = f"cv_{media_id}.pdf"
-                file_path = os.path.join(DOWNLOAD_FOLDER, filename)
+                file_path = os.path.join(DOWNLOAD_FOLDER, f"cv_{media_id}.pdf")
                 with open(file_path, "wb") as f:
                     f.write(file_res.content)
                 return file_path
         return None
-    except Exception as e:
-        print(f"❌ Download Error: {e}")
+    except:
         return None
 
 # --- BACKGROUND AI WORKER ---
 def process_cv_background_task(file_path, from_number, position):
-    print(f"🧵 Thread Started: Analyzing CV for {position}...")
-    
+    print(f"🧵 [THREAD] Analyzing CV for {position}...")
     cv_text = ""
     try:
         with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
-                extracted = page.extract_text()
-                if extracted: cv_text += extracted + "\n"
-    except:
-        send_reply(from_number, "⚠️ Error reading your PDF content.")
+            # Read first 2 pages for efficiency
+            for page in pdf.pages[:2]: 
+                cv_text += (page.extract_text() or "") + "\n"
+    except Exception as e:
+        print(f"❌ [PDF] Error: {e}")
         return
 
-    prompt = f"""
-    Analyze this CV for the role of: {position}.
-    CV TEXT: {cv_text[:2500]} 
-
-    TASK:
-    1. Give a numerical score out of 100.
-    2. Provide a 2-sentence summary of the candidate's fit.
-
-    Reply strictly in this format:
-    SCORE: [Number]
-    ANALYSIS: [Summary]
-    """
+    prompt = (
+        f"Role: {position}. Analyze this resume snippet: {cv_text[:1200]}. "
+        f"Reply ONLY in this format: SCORE: [0-100] ANALYSIS: [1 sentence summary]."
+    )
 
     try:
-        response = requests.post("http://localhost:11434/api/generate",
-            json={"model": "llama3.2", "prompt": prompt, "stream": False})
+        # AI Stability: 180s timeout
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": "llama3.2", "prompt": prompt, "stream": False}, 
+            timeout=180 
+        )
         
         if response.status_code == 200:
             ai_raw = response.json().get("response", "")
@@ -166,64 +171,58 @@ def process_cv_background_task(file_path, from_number, position):
                 score = ai_raw.split("SCORE:")[1].split("ANALYSIS:")[0].strip()
                 analysis = ai_raw.split("ANALYSIS:")[1].strip()
             except:
-                score, analysis = "0", "Parsing Error"
+                score, analysis = "0", "AI format parsing error"
 
-            # Log to local Excel AND Sync to Drive
+            # 1. Update Excel & Master Database on Drive
             log_to_excel(from_number, position, score, analysis)
             
-            # Send Professional Confirmation
-            send_reply(from_number, "✅ Your application has been logged! Our HR team will review your profile shortly.")
+            # 2. Upload PDF CV to the dedicated folder
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+            drive_cv_name = f"CV-{position}-{from_number}-{timestamp}.pdf"
+            sync_to_google_drive(file_path, drive_cv_name, folder_id=CV_FOLDER_ID)
+            
+            send_reply(from_number, "✅ Application and CV have been logged in the cloud database!")
         else:
-            send_reply(from_number, "⚠️ AI Service error. Please try again later.")
+            send_reply(from_number, "⚠️ AI Service busy. Data logged locally.")
+
     except Exception as e:
-        print(f"❌ AI Error: {e}")
+        print(f"❌ [AI] Error: {e}")
 
 # --- WEBHOOK ROUTES ---
 @app.route('/webhook', methods=['GET'])
 def verify():
-    mode, token, challenge = request.args.get("hub.mode"), request.args.get("hub.verify_token"), request.args.get("hub.challenge")
-    if mode == "subscribe" and token == VERIFY_TOKEN: return challenge, 200
+    if request.args.get("hub.verify_token") == VERIFY_TOKEN:
+        return request.args.get("hub.challenge"), 200
     return "Forbidden", 403
 
 @app.route('/webhook', methods=['POST'])
 def receive_message():
     data = request.get_json(force=True)
     try:
-        if data.get("object") == "whatsapp_business_account":
-            value = data["entry"][0]["changes"][0]["value"]
-            if "messages" in value:
-                message = value["messages"][0]
-                from_number = message["from"]
+        msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
+        num = msg["from"]
+        
+        if msg["type"] == "text":
+            body = msg["text"]["body"].strip()
+            if body == "1":
+                send_reply(num, "Available Roles:\n- Python Developer\n- AI Engineer\n- Data Scientist")
+            elif body in ["Python Developer", "AI Engineer", "Data Scientist"]:
+                user_states[num] = body
+                send_reply(num, f"Upload your PDF CV for the *{body}* role.")
+            else:
+                send_reply(num, "Welcome! Reply '1' to see roles.")
 
-                # --- POSITION SELECTION ---
-                if message["type"] == "text":
-                    body = message["text"]["body"].strip()
-                    if body == "1":
-                        send_reply(from_number, "Which position are you applying for?\n\n- Python Developer\n- AI Engineer\n- Data Scientist")
-                    elif body in ["Python Developer", "AI Engineer", "Data Scientist"]:
-                        user_states[from_number] = body
-                        send_reply(from_number, f"Great! Upload your CV (PDF) for the *{body}* role.")
-                    else:
-                        send_reply(from_number, "Welcome! Reply '1' to see available roles.")
+        elif msg["type"] == "document" and num in user_states:
+            pos = user_states[num]
+            send_reply(num, "📥 CV received! Processing for the cloud...")
+            path = download_media(msg["document"]["id"])
+            if path:
+                threading.Thread(target=process_cv_background_task, args=(path, num, pos)).start()
+                del user_states[num]
+            else:
+                send_reply(num, "❌ Error: Download failed.")
 
-                # --- DOCUMENT UPLOAD ---
-                elif message["type"] == "document":
-                    if from_number not in user_states:
-                        send_reply(from_number, "⚠️ Please select a position first by replying '1'.")
-                    else:
-                        mime_type = message["document"].get("mime_type", "")
-                        if "pdf" in mime_type:
-                            position = user_states[from_number]
-                            send_reply(from_number, f"📥 CV received for *{position}*. Logging your application now...")
-                            
-                            file_path = download_media(message["document"]["id"])
-                            if file_path:
-                                threading.Thread(target=process_cv_background_task, args=(file_path, from_number, position)).start()
-                                del user_states[from_number] # Clear state
-                        else:
-                            send_reply(from_number, "⚠️ Please send only PDF files.")
-
-    except Exception as e: print(f"❌ Webhook Error: {e}")
+    except: pass
     return "EVENT_RECEIVED", 200
 
 if __name__ == "__main__":
