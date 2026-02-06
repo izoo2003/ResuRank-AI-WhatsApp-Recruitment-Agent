@@ -1,110 +1,124 @@
-# 🤖 ResuRank AI: WhatsApp Recruiter
+# 🤖 AI-Powered WhatsApp HR Recruiter
 
-**ResuRank AI** is an autonomous recruitment assistant integrated directly into WhatsApp. Powered by a local **Llama 3.2** model and **Flask**, it instantly parses PDF resumes and evaluates candidates with human-level insight. It features threaded processing for real-time feedback and local inference for total data privacy with zero API costs.
-
----
-
-## ✨ Features
-
-* **Instant Screening:** Automatically responds to users with a service menu.
-* **AI Resume Analysis:** Uses Llama 3.2 via Ollama to rank PDFs.
-* **Asynchronous Processing:** Multi-threading ensures Meta webhooks never timeout.
-* **Data Privacy:** Resume parsing and AI inference happen 100% locally.
-* **Automated Workflow:** From WhatsApp document upload to a structured HR report in seconds.
+**An automated recruitment pipeline that screens CVs using local Llama 3.2, logs data to Excel, and synchronizes everything to Google Drive.**
 
 ---
 
-## 🛠 Tech Stack
+## 🌟 Overview
 
-* **Language:** Python 3.10+
-* **Framework:** Flask
-* **AI Engine:** Ollama (Llama 3.2)
-* **Tunneling:** ngrok
-* **API:** Meta WhatsApp Business API
-* **Libraries:** `pdfplumber`, `requests`, `threading`
+This project transforms a WhatsApp Business account into an automated HR assistant. It guides candidates through job selection, accepts PDF CVs, analyzes them using a locally hosted **Llama 3.2** model via **Ollama**, and maintains a master database in the cloud.
 
 ---
 
-| Main Menu | AI CV Analysis |
-| :---: | :---: |
-| <img src="/Automation/screenshots/img1.jpeg" width="250"> | <img src="Automation/screenshots/img2.jpeg" width="250"> |
+## 🛠️ Tech Stack
 
-## 🚀 Getting Started
+* **Backend:** Python / Flask
+* **AI Engine:** Llama 3.2 (via Ollama)
+* **Messaging:** WhatsApp Cloud API (Meta)
+* **Database:** Local Excel (`openpyxl` / `pandas`)
+* **Cloud Storage:** Google Drive API (`PyDrive2`)
+* **Tunneling:** Ngrok (for webhook exposure)
+
+---
+
+## 🚀 Key Features
+
+* **Automated Workflow:** Greets users and manages application states.
+* **Local AI Analysis:** Privacy-focused CV screening—no data leaves your machine for AI processing.
+* **One-Time Authentication:** Uses credential caching to avoid repeated Google Drive logins.
+* **Master Database Sync:** Intelligently updates a single master Excel file on the cloud instead of creating duplicates.
+* **Organized Storage:** Routes all received CVs into a specific timestamped folder on Google Drive.
+* **Threaded Processing:** Handles AI analysis in the background to ensure WhatsApp webhooks never time out.
+
+---
+
+## 📁 Project Structure
+
+```text
+├── server.py              # Main application logic
+├── config.py              # Sensitive API keys & tokens
+├── client_secrets.json    # Google Drive API credentials
+├── mycreds.txt            # Cached Google Drive session (Auto-generated)
+├── Candidate_Database.xlsx# Local master database
+├── downloaded_cvs/        # Local storage for PDF resumes
+└── README.md              # Project documentation
+
+```
+
+---
+
+## ⚙️ Setup & Installation
 
 ### 1. Prerequisites
 
-* **Python:** Install via [python.org](https://python.org).
-* **Ollama:** Download from [ollama.com](https://ollama.com) and run `ollama pull llama3.2`.
-* **ngrok:** Install and authenticate your account.
-* **Meta Developer Account:** Create a WhatsApp Business App at [developers.facebook.com](https://developers.facebook.com).
+* **Python 3.10+**
+* **Ollama:** Installed and running with the `llama3.2` model.
+* **Ngrok:** Authenticated and ready to tunnel port 5000.
+* **Meta Developer Account:** WhatsApp Business Cloud API configured.
 
-### 2. Installation
+### 2. Environment Setup
 
-Clone the repository and install dependencies:
+Install the required Python libraries:
 
 ```bash
-git clone https://github.com/yourusername/ResuRank-AI.git
-cd ResuRank-AI
-pip install flask requests pdfplumber
+pip install flask requests pandas openpyxl pdfplumber pydrive2
 
 ```
 
-### 3. Setup Private Configuration (`config.py`)
+### 3. Google Drive API Configuration
 
-For security, the sensitive credentials are kept in a separate file. **You must create this file yourself.**
+1. Create a project in the **Google Cloud Console**.
+2. Enable the **Google Drive API**.
+3. Create an **OAuth 2.0 Client ID** (Desktop Application).
+4. Download the JSON and rename it to `client_secrets.json` in the root folder.
+5. Add your email to the **Test Users** in the OAuth Consent Screen.
 
-Create a file named `config.py` in the root directory and paste the following:
-
-```python
-# config.py
-
-# Found in Meta Dashboard > WhatsApp > API Setup
-ACCESS_TOKEN = "YOUR_PERMANENT_ACCESS_TOKEN"
-PHONE_NUMBER_ID = "YOUR_PHONE_NUMBER_ID"
-VERSION = "v21.0" # Or the latest version
-
-# Optional: Add any other private keys here
-
-```
-
----
-
-## 🚦 How to Run
-
-Follow this exact order to ensure the webhook handshake succeeds:
+### 4. Running the Project
 
 1. **Start Ollama:**
-Ensure the Ollama desktop app is running or run `ollama serve`.
-2. **Start the Flask Server:**
 ```bash
-python server.py
+ollama serve
 
 ```
 
 
-3. **Start the ngrok Tunnel:**
+2. **Start Ngrok:**
 ```bash
 ngrok http 5000
 
 ```
 
 
-4. **Configure Meta Webhook:**
-* Copy the `https` URL from ngrok.
-* Paste it into **Meta Dashboard > WhatsApp > Configuration** as the Callback URL.
-* **Crucial:** Add `/webhook` to the end of the URL (e.g., `https://random-id.ngrok-free.app/webhook`).
-* Verify with your chosen token.
+3. **Update Webhook:** Copy the Ngrok URL to your Meta Developer Dashboard.
+4. **Launch Server:**
+```bash
+python server.py
+
+```
 
 
 
 ---
 
-## 📱 Usage
+## 📝 Usage
 
-1. Send **"Hi"** to your WhatsApp Business number to see the menu.
-2. Reply with **"3"** to initiate the CV Ranking process.
-3. **Upload a PDF** resume.
-4. Wait ~20 seconds for the AI to generate a score, list strengths/weaknesses, and provide a verdict.
+1. Send **"1"** to the WhatsApp bot to view available roles.
+2. Select a role (e.g., *AI Engineer*).
+3. Upload a **PDF CV**.
+4. The bot will:
+* Download the file.
+* Use **Llama 3.2** to generate a fit score and summary.
+* Update the local `Candidate_Database.xlsx`.
+* Sync the Excel file to Google Drive.
+* Upload the PDF to the designated `Received_CVs` folder.
+
+
 
 ---
 
+## ⚠️ Important Notes
+
+* **File Locking:** Ensure `Candidate_Database.xlsx` is closed on your computer so Python can write to it.
+* **Timeouts:** The AI analysis is set to a 180s timeout to accommodate varying hardware speeds.
+
+---
